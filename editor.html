@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vi-Notes</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+            background: #fafafa;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: #fff;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 16px;
+            color: #333;
+        }
+
+        .session-info {
+            font-size: 12px;
+            color: #999;
+        }
+
+        .editor-container {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .editor-wrapper {
+            flex: 1;
+            display: flex;
+            min-width: 0;
+        }
+
+        textarea {
+            flex: 1;
+            padding: 20px;
+            border: none;
+            border-right: 1px solid #e0e0e0;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #333;
+            background: #fff;
+            resize: none;
+            outline: none;
+        }
+
+        textarea::selection {
+            background: #d0e8ff;
+        }
+
+        .paste-history {
+            width: 400px;
+            background: #f5f5f5;
+            border-left: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .paste-history-header {
+            padding: 15px;
+            background: #fff;
+            border-bottom: 1px solid #e0e0e0;
+            font-weight: 600;
+            color: #333;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .paste-history-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .paste-item {
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .paste-item:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+
+        .paste-item-time {
+            font-size: 11px;
+            color: #999;
+            margin-bottom: 6px;
+        }
+
+        .paste-item-content {
+            font-size: 12px;
+            color: #333;
+            line-height: 1.4;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+            max-height: 100px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+
+        .paste-item-meta {
+            font-size: 10px;
+            color: #bbb;
+            margin-top: 6px;
+            text-align: right;
+        }
+
+        .paste-history-empty {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #ccc;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Vi-Notes Editor</h1>
+        <div class="session-info">
+            Session: <span id="sessionId">Initializing...</span> | Pastes: <span id="pasteCount">0</span>
+        </div>
+    </div>
+
+    <div class="editor-container">
+        <div class="editor-wrapper">
+            <textarea id="editor" placeholder="Start typing or paste text here..."></textarea>
+        </div>
+        <div class="paste-history">
+            <div class="paste-history-header">Paste History</div>
+            <div class="paste-history-list" id="pasteHistoryList">
+                <div class="paste-history-empty">No pastes yet</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API Configuration
+        const API_BASE_URL = '/api';
+        let currentSessionId = null;
+        let pasteCount = 0;
+        const editor = document.getElementById('editor');
+
+        function insertTextAtCursor(text) {
+            const start = editor.selectionStart;
+            const end = editor.selectionEnd;
+            const before = editor.value.substring(0, start);
+            const after = editor.value.substring(end);
+
+            editor.value = before + text + after;
+            editor.selectionStart = editor.selectionEnd = start + text.length;
+        }
+
+        function processIncomingText(text) {
+            if (!text) {
+                return;
+            }
+
+            insertTextAtCursor(text);
+            addToPasteHistory(text);
+            savePasteToDatabase(text);
+        }
+
+        // Initialize session on page load
+        async function initializeSession() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/sessions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title: 'Vi-Notes Session' })
+                });
+
+                const data = await response.json();
+                currentSessionId = data._id;
+                document.getElementById('sessionId').textContent = currentSessionId;
+            } catch (error) {
+                console.error('Failed to initialize session:', error);
+                currentSessionId = 'local-' + Date.now();
+                document.getElementById('sessionId').textContent = currentSessionId;
+            }
+        }
+
+        // Handle paste events
+        editor.addEventListener('paste', async (e) => {
+            e.preventDefault();
+
+            const pastedText = (e.clipboardData || window.clipboardData).getData('text');
+
+            processIncomingText(pastedText);
+        });
+
+        // Enable drag-and-drop text input and track it the same as paste
+        editor.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+        });
+
+        editor.addEventListener('drop', (e) => {
+            e.preventDefault();
+            editor.focus();
+
+            const droppedText = (e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text')).trim();
+            processIncomingText(droppedText);
+        });
+
+        // Add paste to history panel on the right
+        function addToPasteHistory(content) {
+            const historyList = document.getElementById('pasteHistoryList');
+            
+            // Remove empty message if it exists
+            const emptyMsg = historyList.querySelector('.paste-history-empty');
+            if (emptyMsg) {
+                emptyMsg.remove();
+            }
+
+            // Create paste item element
+            const pasteItem = document.createElement('div');
+            pasteItem.className = 'paste-item';
+            
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit',
+                hour12: true 
+            });
+            const dateStr = now.toLocaleDateString('en-US', { 
+                month: 'short', 
+                day: 'numeric', 
+                year: 'numeric' 
+            });
+            
+            // Truncate content to first 200 characters for preview
+            const previewContent = content.length > 200 ? content.substring(0, 200) + '...' : content;
+            
+            pasteItem.innerHTML = `
+                <div class="paste-item-time">${dateStr} • ${timeStr}</div>
+                <div class="paste-item-content">${escapeHtml(previewContent)}</div>
+                <div class="paste-item-meta">${content.length} chars</div>
+            `;
+            
+            // Add to top of list
+            historyList.insertBefore(pasteItem, historyList.firstChild);
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(unsafe) {
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        // Save paste data to database
+        async function savePasteToDatabase(content) {
+            try {
+                if (!currentSessionId) {
+                    console.error('Session not initialized');
+                    return;
+                }
+
+                const response = await fetch(`${API_BASE_URL}/sessions/${currentSessionId}/paste-event`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content: content,
+                        timestamp: new Date()
+                    })
+                });
+
+                if (response.ok) {
+                    pasteCount++;
+                    document.getElementById('pasteCount').textContent = pasteCount;
+                }
+            } catch (error) {
+                console.error('Error saving paste:', error);
+            }
+        }
+
+        // Initialize on load
+        window.addEventListener('load', initializeSession);
+    </script>
+</body>
+</html>
